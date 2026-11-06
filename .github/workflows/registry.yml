@@ -1,0 +1,72 @@
+name: Registry
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "23 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          path: registry
+      - uses: actions/checkout@v6
+        with:
+          repository: kevherro/dpm
+          path: dpm-client
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: dpm-client/go.mod
+      - name: Verify Apple silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Test publication history policy
+        working-directory: registry
+        run: python3 scripts/check_history_test.py
+      - name: Enforce publication history
+        if: github.event_name == 'pull_request'
+        working-directory: registry
+        run: scripts/check_history.py "origin/${{ github.base_ref }}"
+      - name: Validate registry and artifact hashes
+        working-directory: dpm-client
+        run: go run ./cmd/dpm registry validate --verify-artifacts "$GITHUB_WORKSPACE/registry"
+
+  lifecycle:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: registry
+      - uses: actions/checkout@v6
+        with:
+          repository: kevherro/dpm
+          path: dpm-client
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: dpm-client/go.mod
+      - name: Build dpm
+        working-directory: dpm-client
+        run: go build -trimpath -o "$RUNNER_TEMP/dpm" ./cmd/dpm
+      - name: Clean ripgrep lifecycle
+        env:
+          DPM_ROOT: ${{ runner.temp }}/dpm-root
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" != schedule ]]; then
+            export DPM_REGISTRY_URL="file://$GITHUB_WORKSPACE/registry"
+          fi
+          "$RUNNER_TEMP/dpm" update
+          "$RUNNER_TEMP/dpm" install ripgrep
+          "$DPM_ROOT/bin/rg" --version
+          test "$("$RUNNER_TEMP/dpm" list)" = "ripgrep 15.1.0"
+          test "$("$RUNNER_TEMP/dpm" install ripgrep)" = $'ripgrep 15.1.0 already installed\ndone'
+          "$RUNNER_TEMP/dpm" remove ripgrep
+          test -z "$("$RUNNER_TEMP/dpm" list)"
