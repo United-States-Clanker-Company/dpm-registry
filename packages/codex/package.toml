@@ -1,0 +1,6 @@
+schema = 1
+name = "codex"
+summary = "Lightweight coding agent that runs in your terminal"
+homepage = "https://github.com/openai/codex"
+license = "Apache-2.0"
+categories = ["ai", "cli"]
